@@ -302,23 +302,34 @@ def get_model_size(model):
     approx_size_gb = total_params * 2 / (1024**3)  # 2 bytes per parameter for float16
     return approx_size_gb
 
-def run_model(model_name, prompt):
+def run_model(# The above code is defining a variable `model_name` in Python.
+model_name, prompt):
     # Map generic model names to actual HF models
     model_mapping = {
-        "phi3": "microsoft/phi-3-mini-4k-instruct",
-        "phi3-mini": "microsoft/phi-3-mini-4k-instruct",
-        "phi3-small": "microsoft/phi-3-small-8k-instruct",
-        "phi3-medium": "microsoft/phi-3-medium-4k-instruct",
-        "mistral-7b": "mistralai/Mistral-7B-Instruct-v0.2",
-        "llama3": "meta-llama/Llama-3-8b-hf",
-        "llama3-8b": "meta-llama/Llama-3-8b-hf",
-        "llama3-8b-instruct": "meta-llama/Llama-3-8b-instruct-hf",
-        "gemma-7b": "google/gemma-7b",
-        "gemma-7b-instruct": "google/gemma-7b-it",
-        "tinyllama": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        "codegemma": "models--google--codegemma-7b",
-        # Add more mappings as needed
+        "deepseek-coder-1.3b-instruct": "deepseek-ai/deepseek-coder-1.3b-instruct",
+        "deepseek-coder-6.7b-instruct": "deepseek-ai/deepseek-coder-6.7b-instruct",
+        "deepseek-llm-7b-base": "deepseek-ai/deepseek-llm-7b-base",
+        "facebook-opt-1.3b": "facebook/opt-1.3b",
+        "codegemma-7b": "google/codegemma-7b",
+        "codegemma-7b-gguf": "google/codegemma-7b-GGUF",
+        "llama-2-7b-chat-hf": "meta-llama/Llama-2-7b-chat-hf",
+        "microsoft-phi-2": "microsoft/phi-2",
+        "microsoft-phi-3-mini-4k-instruct": "microsoft/phi-3-mini-4k-instruct",
+        "microsoft-phi-3-mini-128k-instruct": "microsoft/phi-3-mini-128k-instruct",
+        "mistral-7b-instruct-v0.1": "mistralai/Mistral-7B-Instruct-v0.1",
+        "stability-stable-diffusion-2-1": "stabilityai/stable-diffusion-2-1",
+        "stability-stable-diffusion-3b": "stabilityai/stable-diffusion-3b",
+        "thebloke-deepseek-coder-6.7b-instruct-gguf": "TheBloke/deepseek-coder-6.7B-instruct-GGUF",
+        "thebloke-deepseek-llm-7b-base-gptq": "TheBloke/deepseek-llm-7b-base-GPTQ",
+        "thebloke-llama-2-7b-chat-gguf": "TheBloke/Llama-2-7B-Chat-GGUF",
+        "thebloke-mistral-7b-instruct": "TheBloke/Mistral-7B-Instruct",
+        "tiiuae-falcon-7b-instruct": "tiiuae/falcon-7b-instruct",
+        "tinyllama-1.1b-chat-v1.0": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "wizardcoder-gguf": "wizardcoder-gguf",  # repo name may vary, could be: "WizardLM/WizardCoder-15B-V1.0-GGUF"
+        "microsoft-phi-3": "microsoft/phi-3-mini-4k-instruct",  # alias for phi-3
+        # Add any others as needed
     }
+
     
     hf_model_name = model_mapping.get(model_name.lower(), model_name)
     
@@ -1386,7 +1397,7 @@ def main():
     parser.add_argument(
         "--models", 
         nargs="+", 
-        help="Models to benchmark (default: phi3, mistral, llama3)"
+        help="Models to benchmark (default: phi3, mistral, llama3). Use 'all' to benchmark all available models."
     )
     
     parser.add_argument(
@@ -1436,6 +1447,56 @@ def main():
     
     args = parser.parse_args()
     
+    # Handle 'all' for models
+    if args.models and 'all' in args.models:
+        # List of all transformers models
+        transformers_models = [
+            "deepseek-coder-1.3b-instruct", 
+            "deepseek-coder-6.7b-instruct",
+            "deepseek-llm-7b-base", 
+            "facebook-opt-1.3b", 
+            "codegemma-7b",
+            "codegemma-7b-gguf", 
+            "llama-2-7b-chat-hf", 
+            "microsoft-phi-2",
+            "microsoft-phi-3-mini-4k-instruct", 
+            "microsoft-phi-3-mini-128k-instruct",
+            "mistral-7b-instruct-v0.1", 
+            "sentence-transformers-all-minilm-l6-v2",
+            "sentence-transformers-mpnet-base-v2", 
+            "stability-stable-diffusion-2-1",
+            "stability-stable-diffusion-3b", 
+            "ts-small",
+            "thebloke-deepseek-coder-6.7b-instruct-gguf", 
+            "thebloke-deepseek-llm-7b-base-gptq",
+            "thebloke-llama-2-7b-chat-gguf", 
+            "thebloke-mistral-7b-instruct",
+            "tiiuae-falcon-7b-instruct", 
+            "tinyllama-1.1b-chat-v1.0",
+            "wizardcoder-gguf", 
+            "microsoft-phi-3"
+        ]
+        
+        # List of all ollama models
+        ollama_models = [
+            "phi3", 
+            "mistral", 
+            "llama3", 
+            "llama3-8b", 
+            "mistral-7b"
+        ]
+        
+        # Combine models based on selected backends
+        all_models = []
+        if not args.backends or "transformers" in args.backends:
+            all_models.extend(transformers_models)
+        if not args.backends or "ollama" in args.backends:
+            all_models.extend(ollama_models)
+            
+        args.models = all_models
+        logger.info(f"Using 'all' option. Benchmarking {len(all_models)} models.")
+        logger.info(f"Models to benchmark: {', '.join(all_models)}")
+    
     benchmark = LLMBenchmark(
         models=args.models,
         backends=args.backends,
@@ -1447,7 +1508,8 @@ def main():
         gpu_memory_limit=args.gpu_memory_limit
     )
     
-    benchmark.run()
+    success = benchmark.run()
+    return 0 if success else 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
