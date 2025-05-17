@@ -63,17 +63,17 @@ Additional Models
 python llm-benchmark.py --models phi3-mini tinyllama qwen2-1.5b --backends transformers --word-counts 50 200 500 --runs 2
 
 
-All models
-
-```
-python llm-benchmark.py --models all --backends transformers --word-counts 50 100 --runs 1
-```
-
-
-
 # Testing larger models (requires more VRAM)
 python llm-benchmark.py --models llama3-70b mistral-medium mixtral-8x7b --backends transformers --word-counts 100 500 --runs 1
 
 # Mix of model sizes
 python llm-benchmark.py --models phi3 mistral-7b gemma-7b falcon-7b --backends transformers --word-counts 100 500 --runs 2
 ```
+
+
+All models
+
+```
+python llm-benchmark.py --models all --backends transformers --word-counts 50 100 --runs 1
+```
+
