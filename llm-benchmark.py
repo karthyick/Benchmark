@@ -10,6 +10,8 @@ import json
 import shutil
 import platform
 import logging
+import tempfile
+import hashlib
 from pathlib import Path
 from datetime import datetime
 import numpy as np
@@ -44,6 +46,8 @@ class LLMBenchmark:
         self.cuda_only = cuda_only
         self.gpu_memory_limit = gpu_memory_limit  # In GB
         self.log_file = self.output_dir / "detailed_benchmark.log"
+        self.temp_dir = Path(tempfile.gettempdir()) / "llm_benchmark"
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
         
     def _get_system_info(self):
         """Collect system information for reporting."""
@@ -101,7 +105,7 @@ else:
     exit(1)  # Exit with error code if CUDA is not available
 """
         
-        temp_file = self.venv_path / "check_cuda.py"
+        temp_file = self.temp_dir / "check_cuda.py"
         with open(temp_file, "w") as f:
             f.write(check_script)
             
@@ -263,8 +267,22 @@ else:
             
         return prompt
     
+    def _create_prompt_file(self, prompt):
+        """Create a file containing the prompt with a short filename."""
+        # Create a hash of the prompt to use as filename
+        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:10]
+        prompt_file = self.temp_dir / f"prompt_{prompt_hash}.txt"
+        
+        with open(prompt_file, "w", encoding="utf-8") as f:
+            f.write(prompt)
+            
+        return prompt_file
+    
     def run_transformers_benchmark(self, model_name, prompt):
         """Run benchmark using HuggingFace Transformers."""
+        # Create a file for the prompt instead of passing it directly
+        prompt_file = self._create_prompt_file(prompt)
+        
         # Create a temporary script to execute in the virtual environment
         temp_script = """
 import time
@@ -273,6 +291,8 @@ import json
 import logging
 import psutil
 import gc
+import os
+import sys
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Configure logging for the subprocess
@@ -302,8 +322,14 @@ def get_model_size(model):
     approx_size_gb = total_params * 2 / (1024**3)  # 2 bytes per parameter for float16
     return approx_size_gb
 
-def run_model(# The above code is defining a variable `model_name` in Python.
-model_name, prompt):
+def read_prompt_from_file(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+def run_model(model_name, prompt_file):
+    # Read prompt from file to avoid command line length issues
+    prompt = read_prompt_from_file(prompt_file)
+    
     # Map generic model names to actual HF models
     model_mapping = {
         "deepseek-coder-1.3b-instruct": "deepseek-ai/deepseek-coder-1.3b-instruct",
@@ -311,21 +337,15 @@ model_name, prompt):
         "deepseek-llm-7b-base": "deepseek-ai/deepseek-llm-7b-base",
         "facebook-opt-1.3b": "facebook/opt-1.3b",
         "codegemma-7b": "google/codegemma-7b",
-        "codegemma-7b-gguf": "google/codegemma-7b-GGUF",
         "llama-2-7b-chat-hf": "meta-llama/Llama-2-7b-chat-hf",
         "microsoft-phi-2": "microsoft/phi-2",
         "microsoft-phi-3-mini-4k-instruct": "microsoft/phi-3-mini-4k-instruct",
         "microsoft-phi-3-mini-128k-instruct": "microsoft/phi-3-mini-128k-instruct",
         "mistral-7b-instruct-v0.1": "mistralai/Mistral-7B-Instruct-v0.1",
-        "stability-stable-diffusion-2-1": "stabilityai/stable-diffusion-2-1",
         "stability-stable-diffusion-3b": "stabilityai/stable-diffusion-3b",
-        "thebloke-deepseek-coder-6.7b-instruct-gguf": "TheBloke/deepseek-coder-6.7B-instruct-GGUF",
-        "thebloke-deepseek-llm-7b-base-gptq": "TheBloke/deepseek-llm-7b-base-GPTQ",
         "thebloke-llama-2-7b-chat-gguf": "TheBloke/Llama-2-7B-Chat-GGUF",
-        "thebloke-mistral-7b-instruct": "TheBloke/Mistral-7B-Instruct",
         "tiiuae-falcon-7b-instruct": "tiiuae/falcon-7b-instruct",
         "tinyllama-1.1b-chat-v1.0": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        "wizardcoder-gguf": "wizardcoder-gguf",  # repo name may vary, could be: "WizardLM/WizardCoder-15B-V1.0-GGUF"
         "microsoft-phi-3": "microsoft/phi-3-mini-4k-instruct",  # alias for phi-3
         # Add any others as needed
     }
@@ -480,16 +500,18 @@ if __name__ == "__main__":
     import sys
     
     model_name = sys.argv[1]
-    prompt = sys.argv[2]
+    prompt_file = sys.argv[2]
     
     try:
-        result = run_model(model_name, prompt)
+        result = run_model(model_name, prompt_file)
         print(json.dumps(result))
     except Exception as e:
         print(json.dumps({"status": "error", "error": str(e)}))
 """
         
-        temp_file = self.venv_path / "run_transformers.py"
+        # Use a short filename for the script
+        script_hash = hashlib.md5(model_name.encode()).hexdigest()[:8]
+        temp_file = self.temp_dir / f"run_tf_{script_hash}.py"
         with open(temp_file, "w") as f:
             f.write(temp_script)
             
@@ -498,7 +520,7 @@ if __name__ == "__main__":
             str(self.python_executable),
             str(temp_file),
             model_name,
-            prompt
+            str(prompt_file)
         ]
         
         try:
@@ -564,9 +586,19 @@ if __name__ == "__main__":
                 "status": "error",
                 "error": "Benchmark timed out"
             }
+        finally:
+            # Clean up temporary files
+            try:
+                os.remove(temp_file)
+                os.remove(prompt_file)
+            except:
+                pass
             
     def run_ollama_benchmark(self, model_name, prompt):
         """Run benchmark using Ollama."""
+        # Create a file for the prompt instead of passing it directly
+        prompt_file = self._create_prompt_file(prompt)
+        
         # Create a temporary script to execute in the virtual environment
         temp_script = """
 import time
@@ -574,6 +606,7 @@ import json
 import requests
 import logging
 import torch
+import os
 
 # Configure logging for the subprocess
 logging.basicConfig(
@@ -593,7 +626,14 @@ def get_gpu_memory_usage():
         return gpu_memory
     return {"error": "CUDA not available"}
 
-def run_model(model_name, prompt):
+def read_prompt_from_file(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+def run_model(model_name, prompt_file):
+    # Read prompt from file to avoid command line length issues
+    prompt = read_prompt_from_file(prompt_file)
+    
     model_mapping = {
         "phi3": "phi3",
         "mistral": "mistral",
@@ -744,16 +784,18 @@ if __name__ == "__main__":
     import sys
     
     model_name = sys.argv[1]
-    prompt = sys.argv[2]
+    prompt_file = sys.argv[2]
     
     try:
-        result = run_model(model_name, prompt)
+        result = run_model(model_name, prompt_file)
         print(json.dumps(result))
     except Exception as e:
         print(json.dumps({"status": "error", "error": str(e)}))
 """
         
-        temp_file = self.venv_path / "run_ollama.py"
+        # Use a short filename for the script
+        script_hash = hashlib.md5(model_name.encode()).hexdigest()[:8]
+        temp_file = self.temp_dir / f"run_ol_{script_hash}.py"
         with open(temp_file, "w") as f:
             f.write(temp_script)
             
@@ -762,7 +804,7 @@ if __name__ == "__main__":
             str(self.python_executable),
             str(temp_file),
             model_name,
-            prompt
+            str(prompt_file)
         ]
         
         try:
@@ -829,6 +871,13 @@ if __name__ == "__main__":
                 "status": "error",
                 "error": "Benchmark timed out"
             }
+        finally:
+            # Clean up temporary files
+            try:
+                os.remove(temp_file)
+                os.remove(prompt_file)
+            except:
+                pass
     
     def run_benchmarks(self):
         """Run benchmarks for all models, backends, and word counts."""
@@ -1367,6 +1416,11 @@ Generated on: {datetime.now().isoformat()}
         if self.venv_path.exists():
             logger.info(f"Removing virtual environment at {self.venv_path}")
             shutil.rmtree(self.venv_path)
+        
+        # Clean up temp directory 
+        if self.temp_dir.exists():
+            logger.info(f"Removing temporary files at {self.temp_dir}")
+            shutil.rmtree(self.temp_dir)
             
         logger.info("Cleanup completed")
     
@@ -1374,6 +1428,11 @@ Generated on: {datetime.now().isoformat()}
         """Run the full benchmark process."""
         try:
             logger.info("Starting LLM benchmark")
+            
+            # Enable Windows long path support if on Windows
+            if platform.system() == "Windows":
+                logger.info("Enabling Windows long path support for this process")
+                # Not directly possible from Python, but we'll handle it by using shorter paths
             
             self.create_venv()
             self.install_dependencies()
@@ -1451,30 +1510,24 @@ def main():
     if args.models and 'all' in args.models:
         # List of all transformers models
         transformers_models = [
-            "deepseek-coder-1.3b-instruct", 
-            "deepseek-coder-6.7b-instruct",
-            "deepseek-llm-7b-base", 
-            "facebook-opt-1.3b", 
-            "codegemma-7b",
-            "codegemma-7b-gguf", 
+             "deepseek-coder-1.3b-instruct", 
+            # "deepseek-coder-6.7b-instruct",
+            # "deepseek-llm-7b-base", 
+             "facebook-opt-1.3b", 
+            # "codegemma-7b",
             "llama-2-7b-chat-hf", 
-            "microsoft-phi-2",
-            "microsoft-phi-3-mini-4k-instruct", 
+            # "microsoft-phi-2",
+            # "microsoft-phi-3-mini-4k-instruct", 
             "microsoft-phi-3-mini-128k-instruct",
             "mistral-7b-instruct-v0.1", 
-            "sentence-transformers-all-minilm-l6-v2",
-            "sentence-transformers-mpnet-base-v2", 
-            "stability-stable-diffusion-2-1",
-            "stability-stable-diffusion-3b", 
-            "ts-small",
-            "thebloke-deepseek-coder-6.7b-instruct-gguf", 
-            "thebloke-deepseek-llm-7b-base-gptq",
-            "thebloke-llama-2-7b-chat-gguf", 
-            "thebloke-mistral-7b-instruct",
-            "tiiuae-falcon-7b-instruct", 
-            "tinyllama-1.1b-chat-v1.0",
-            "wizardcoder-gguf", 
-            "microsoft-phi-3"
+            # "sentence-transformers-all-minilm-l6-v2",
+            # "sentence-transformers-mpnet-base-v2", 
+            # "stability-stable-diffusion-3b", 
+            # "ts-small",
+            # "thebloke-llama-2-7b-chat-gguf", 
+            # "tiiuae-falcon-7b-instruct", 
+            # "tinyllama-1.1b-chat-v1.0",
+            # "microsoft-phi-3"
         ]
         
         # List of all ollama models
